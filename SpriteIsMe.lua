@@ -1,7 +1,7 @@
 local function SpriteIsMe()
 	-- Define descriptive attributes of the custom extension that are displayed on the Tracker settings
 	local self = {
-		version = "0.2",
+		version = "0.3",
 		name = "Sprite Is Me",
 		author = "UTDZac",
 		description = "You become the Pokémon! Requires Walking Pals icons to be turned on.",
@@ -114,11 +114,12 @@ local function SpriteIsMe()
 
 	-- Executed once every 30 frames or after any redraw event is scheduled (i.e. most button presses)
 	function self.afterRedraw()
-		if not Program.isValidMapLocation() or Battle.inBattleScreen or not allowedIconSets[tostring(Options["Pokemon icon set"])] then
+		local pokemon = Tracker.getPokemon(1, true)
+		if not Program.isValidMapLocation() or not pokemon or Battle.inBattleScreen or not allowedIconSets[tostring(Options["Pokemon icon set"])] then
 			return
 		end
 
-		local pokemonID = self.getPokemonIDFromSettings() or (Tracker.getPokemon(1, true) or {}).pokemonID or 0
+		local pokemonID = self.getPokemonIDFromSettings() or pokemon.pokemonID or 0
 		if not PokemonData.isValid(pokemonID) then
 			return
 		end
