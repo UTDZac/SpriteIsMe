@@ -1,0 +1,1 @@
+Refer to the core Ironmon Tracker files to see examples of how sprite images are made: ~\ironmon_tracker\images\spritesWalkingPals
