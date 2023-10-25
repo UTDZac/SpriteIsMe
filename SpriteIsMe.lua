@@ -1,6 +1,6 @@
 local function SpriteIsMe()
 	local self = {
-		version = "1.0",
+		version = "1.1",
 		name = "Sprite Is Me",
 		author = "UTDZac",
 		description = "Turns your character into your lead Pokémon, or you can choose the Pokémon you want to become.",
@@ -12,6 +12,7 @@ local function SpriteIsMe()
 	local extSettingsKey = "SpriteIsMe"
 	local settings = {
 		["ForceUsePokemon"] = {}, -- If provided in options, will use this pokemon instead of your lead pokemon (e.g. "Mr. Mime")
+		["DefaultIfNoPokemon"] = {},
 		["CustomSpriteName"] = {},
 		["CustomSpriteWidth"] = {},
 		["CustomSpriteHeight"] = {},
@@ -86,6 +87,7 @@ local function SpriteIsMe()
 			end
 		end
 
+		iconKey = iconKey or self.getDefaultIDFromSettings()
 		if not iconKey then
 			return
 		end
@@ -175,24 +177,42 @@ local function SpriteIsMe()
 		local idFromSettings = tonumber(settings["ForceUsePokemon"]:get() or "") or 0
 		return PokemonData.isValid(idFromSettings) and idFromSettings or nil
 	end
+	function self.getDefaultIDFromSettings()
+		local idFromSettings = tonumber(settings["DefaultIfNoPokemon"]:get() or "") or 0
+		return PokemonData.isValid(idFromSettings) and idFromSettings or nil
+	end
 
 	function self.openOptionsPopup()
 		if not Main.IsOnBizhawk() then return end
 
-		local form = Utils.createBizhawkForm("Choose Your Sprite", 320, 290, 100, 25)
+		local form = Utils.createBizhawkForm("SpriteIsMe Options", 320, 340, 100, 20)
 
 		local leftX, leftW = 28, 115
 		local rightX, rightW = 152, 134
 		local boxH = 20
-		local nextLineY = 20
+		local nextLineY = 12
+		local allPokemonNames = PokemonData.namesToList()
+		table.insert(allPokemonNames, 1, Constants.BLANKLINE)
+
+		forms.label(form, "Default if no Pokémon:", leftX, nextLineY, leftW, boxH)
+		local defaultPokemonId = tonumber(settings["DefaultIfNoPokemon"]:get() or "") or 0
+		local defaultPokemonName = PokemonData.isValid(defaultPokemonId) and PokemonData.Pokemon[defaultPokemonId].name or Constants.BLANKLINE
+		local dropdownPokemonDefault = forms.dropdown(form, {["Init"]="Loading Names"}, rightX, nextLineY - 2, rightW, boxH)
+		forms.setdropdownitems(dropdownPokemonDefault, allPokemonNames, true) -- true = alphabetize the list
+		forms.setproperty(dropdownPokemonDefault, "AutoCompleteSource", "ListItems")
+		forms.setproperty(dropdownPokemonDefault, "AutoCompleteMode", "Append")
+		forms.settext(dropdownPokemonDefault, defaultPokemonName)
+		nextLineY = nextLineY + 27
+
+		local headerText = string.format("%s %s %s", string.rep(Constants.BLANKLINE, 10), Utils.toUpperUTF8("Sprite Override"), string.rep(Constants.BLANKLINE, 10))
+		forms.label(form, headerText, leftX - 18, nextLineY, 400, boxH)
+		nextLineY = nextLineY + 22
 
 		-- Existing Pokemon Sprites
 		local idFromSettings = tonumber(settings["ForceUsePokemon"]:get() or "") or 0
 		local chosenPokemonName = PokemonData.isValid(idFromSettings) and PokemonData.Pokemon[idFromSettings].name or Constants.BLANKLINE
-		local allPokemonNames = PokemonData.namesToList()
-		table.insert(allPokemonNames, 1, Constants.BLANKLINE)
 		-- local textboxPokemonName = forms.textbox(form, chosenPokemonName, rightW, boxH, nil, rightX, nextLineY - 2)
-		forms.label(form, "Pokémon name:", leftX, nextLineY, leftW, boxH)
+		forms.label(form, "Always use Pokémon:", leftX, nextLineY, leftW, boxH)
 		local dropdownPokemonNames = forms.dropdown(form, {["Init"]="Loading Names"}, rightX, nextLineY - 2, rightW, boxH)
 		forms.setdropdownitems(dropdownPokemonNames, allPokemonNames, true) -- true = alphabetize the list
 		forms.setproperty(dropdownPokemonNames, "AutoCompleteSource", "ListItems")
@@ -231,8 +251,15 @@ local function SpriteIsMe()
 
 		nextLineY = nextLineY + 5
 		forms.button(form, Resources.AllScreens.Save, function()
-			local pokemonText = forms.gettext(dropdownPokemonNames) or ""
-			local pokemonID = PokemonData.getIdFromName(pokemonText) or 0
+			local defaultId = PokemonData.getIdFromName(forms.gettext(dropdownPokemonDefault) or "") or 0
+			if PokemonData.isValid(defaultId) then
+				settings["DefaultIfNoPokemon"].values = { defaultId }
+			else
+				settings["DefaultIfNoPokemon"].values = {}
+			end
+			settings["DefaultIfNoPokemon"]:save()
+
+			local pokemonID = PokemonData.getIdFromName(forms.gettext(dropdownPokemonNames) or "") or 0
 			if PokemonData.isValid(pokemonID) then
 				settings["ForceUsePokemon"].values = { pokemonID }
 			else
@@ -270,6 +297,7 @@ local function SpriteIsMe()
 			Program.redraw(true)
 		end, 30, nextLineY)
 		forms.button(form, Resources.AllScreens.Clear, function()
+			forms.settext(dropdownPokemonDefault, Constants.BLANKLINE)
 			forms.settext(dropdownPokemonNames, Constants.BLANKLINE)
 			forms.settext(textboxCustomName, "")
 			forms.settext(textboxCustomWidth, "")
@@ -278,10 +306,10 @@ local function SpriteIsMe()
 			forms.settext(textboxCustomWalk, "")
 			forms.settext(textboxCustomSleep, "")
 			forms.settext(textboxCustomFaint, "")
-		end, 120, nextLineY)
+		end, 121, nextLineY)
 		forms.button(form, Resources.AllScreens.Cancel, function()
 			Utils.closeBizhawkForm(form)
-		end, 210, nextLineY)
+		end, 212, nextLineY)
 	end
 
 	function self.updateIconData()
