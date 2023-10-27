@@ -1,6 +1,6 @@
 local function SpriteIsMe()
 	local self = {
-		version = "1.1",
+		version = "1.2",
 		name = "Sprite Is Me",
 		author = "UTDZac",
 		description = "Turns your character into your lead Pokémon, or you can choose the Pokémon you want to become.",
@@ -121,6 +121,12 @@ local function SpriteIsMe()
 		local icon = SpriteData.IconData[iconKey][activeIcon.animationType]
 		if not icon then
 			return
+		end
+
+		-- Only these two animation types allow for facing different directions.
+		if activeIcon.animationType ~= SpriteData.Types.Walk and activeIcon.animationType ~= SpriteData.Types.Idle then
+			facingFrame = 1
+			lastKnownFacing = 1
 		end
 
 		-- Mark that this sprite animation is being used
