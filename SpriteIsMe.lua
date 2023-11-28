@@ -1,6 +1,6 @@
 local function SpriteIsMe()
 	local self = {
-		version = "1.2",
+		version = "1.3",
 		name = "Sprite Is Me",
 		author = "UTDZac",
 		description = "Turns your character into your lead Pokémon, or you can choose the Pokémon you want to become.",
@@ -9,8 +9,8 @@ local function SpriteIsMe()
 	self.url = string.format("https://github.com/%s", self.github)
 
 	-- Other internal attributes, no need to change any of these
-	local extSettingsKey = "SpriteIsMe"
-	local settings = {
+	self.settingsKey = "SpriteIsMe"
+	self.Settings = {
 		["ForceUsePokemon"] = {}, -- If provided in options, will use this pokemon instead of your lead pokemon (e.g. "Mr. Mime")
 		["DefaultIfNoPokemon"] = {},
 		["CustomSpriteName"] = {},
@@ -21,19 +21,22 @@ local function SpriteIsMe()
 		["CustomSpriteFramesSleep"] = {},
 		["CustomSpriteFramesFaint"] = {},
 	}
+	self.forceUsePokemonId = nil
+	self.defaultPokemonId = nil
 	local CUSTOM_SPRITE_FOLDER = FileManager.getCustomFolderPath() .. "SpriteIsMeImages"
 	local originalWalkSetting, originalAnimationAllowed
 	local lastKnownFacing = 1
+	local INFINITE_FUSION_EXT
 
 	local SCREEN_CENTER_X = Constants.SCREEN.WIDTH / 2 - 16
 	local SCREEN_CENTER_Y = Constants.SCREEN.HEIGHT / 2 - 24
 
 	-- Definite save/load settings functions
-	for key, setting in pairs(settings or {}) do
+	for key, setting in pairs(self.Settings or {}) do
 		setting.key = tostring(key)
 		if type(setting.load) ~= "function" then
 			setting.load = function(this)
-				local loadedValue = TrackerAPI.getExtensionSetting(extSettingsKey, this.key)
+				local loadedValue = TrackerAPI.getExtensionSetting(self.settingsKey, this.key)
 				if loadedValue ~= nil then
 					this.values = Utils.split(loadedValue, ",", true)
 				end
@@ -44,7 +47,7 @@ local function SpriteIsMe()
 			setting.save = function(this)
 				if this.values ~= nil then
 					local savedValue = table.concat(this.values, ",") or ""
-					TrackerAPI.saveExtensionSetting(extSettingsKey, this.key, savedValue)
+					TrackerAPI.saveExtensionSetting(self.settingsKey, this.key, savedValue)
 				end
 			end
 		end
@@ -59,16 +62,56 @@ local function SpriteIsMe()
 		end
 	end
 
+	self.event = EventHandler.IEvent:new({
+		Key = "CR_SpriteIsMeChange",
+		Type = EventHandler.EventTypes.Reward,
+		Name = "[EXT] Change Sprite Is Me",
+		IsEnabled = true,
+		RewardId = "", -- Loaded later when event is added
+		Process = function() return true end,
+		Fulfill = function(this, request)
+			-- Check if the redeemed Pokémon is valid
+			local params = (request.Args or {}).Input or ""
+			if Utils.isNilOrEmpty(params, true) then
+				return string.format("> Must enter a valid Pokémon name.")
+			end
+			local id = DataHelper.findPokemonId(params)
+			if not PokemonData.isValid(id) then
+				return string.format("%s > Can't find a Pokémon with this name.", params)
+			end
+			-- Set the SpriteIsMe extension to use that Pokémon
+			local ext = TrackerAPI.getExtensionSelf(self.settingsKey)
+			if ext then
+				ext.forceUsePokemonId = id
+				local extSettings = ext.Settings and ext.Settings["ForceUsePokemon"]
+				if extSettings then
+					ext.Settings["ForceUsePokemon"].values = { id }
+					ext.Settings["ForceUsePokemon"]:save()
+				end
+				Program.redraw(true)
+			end
+			-- Return an empty response, no output necssary if it works
+			return ""
+		end,
+	})
+
 	function self.drawSpriteOnScreen()
 		if not Program.isValidMapLocation() or Battle.inBattleScreen or Program.currentOverlay ~= nil then
+			return
+		end
+		-- Check other overlays
+		if LogOverlay.isDisplayed or UpdateScreen.showNotes or (StreamConnectOverlay and StreamConnectOverlay.isDisplayed) then
+			return
+		end
+		if INFINITE_FUSION_EXT and INFINITE_FUSION_EXT.isDisplayed then
 			return
 		end
 
 		local iconKey
 		local useCustom = false
 
-		local spriteId = self.getPokemonIDFromSettings()
-		local spriteName = settings["CustomSpriteName"]:get() or ""
+		local spriteId = self.forceUsePokemonId
+		local spriteName = self.Settings["CustomSpriteName"]:get() or ""
 		if spriteId then
 			-- First try using an internal pokemon sprite, if chosen by user
 			iconKey = spriteId
@@ -87,7 +130,7 @@ local function SpriteIsMe()
 			end
 		end
 
-		iconKey = iconKey or self.getDefaultIDFromSettings()
+		iconKey = iconKey or self.defaultPokemonId
 		if not iconKey then
 			return
 		end
@@ -178,16 +221,6 @@ local function SpriteIsMe()
 		return table.concat(listOfPaths, FileManager.slash)
 	end
 
-	-- If its set, returns a proper pokemon id, otherwise nil
-	function self.getPokemonIDFromSettings()
-		local idFromSettings = tonumber(settings["ForceUsePokemon"]:get() or "") or 0
-		return PokemonData.isValid(idFromSettings) and idFromSettings or nil
-	end
-	function self.getDefaultIDFromSettings()
-		local idFromSettings = tonumber(settings["DefaultIfNoPokemon"]:get() or "") or 0
-		return PokemonData.isValid(idFromSettings) and idFromSettings or nil
-	end
-
 	function self.openOptionsPopup()
 		if not Main.IsOnBizhawk() then return end
 
@@ -201,8 +234,7 @@ local function SpriteIsMe()
 		table.insert(allPokemonNames, 1, Constants.BLANKLINE)
 
 		forms.label(form, "Default if no Pokémon:", leftX, nextLineY, leftW, boxH)
-		local defaultPokemonId = tonumber(settings["DefaultIfNoPokemon"]:get() or "") or 0
-		local defaultPokemonName = PokemonData.isValid(defaultPokemonId) and PokemonData.Pokemon[defaultPokemonId].name or Constants.BLANKLINE
+		local defaultPokemonName = PokemonData.isValid(self.defaultPokemonId) and PokemonData.Pokemon[self.defaultPokemonId].name or Constants.BLANKLINE
 		local dropdownPokemonDefault = forms.dropdown(form, {["Init"]="Loading Names"}, rightX, nextLineY - 2, rightW, boxH)
 		forms.setdropdownitems(dropdownPokemonDefault, allPokemonNames, true) -- true = alphabetize the list
 		forms.setproperty(dropdownPokemonDefault, "AutoCompleteSource", "ListItems")
@@ -215,8 +247,7 @@ local function SpriteIsMe()
 		nextLineY = nextLineY + 22
 
 		-- Existing Pokemon Sprites
-		local idFromSettings = tonumber(settings["ForceUsePokemon"]:get() or "") or 0
-		local chosenPokemonName = PokemonData.isValid(idFromSettings) and PokemonData.Pokemon[idFromSettings].name or Constants.BLANKLINE
+		local chosenPokemonName = PokemonData.isValid(self.forceUsePokemonId) and PokemonData.Pokemon[self.forceUsePokemonId].name or Constants.BLANKLINE
 		-- local textboxPokemonName = forms.textbox(form, chosenPokemonName, rightW, boxH, nil, rightX, nextLineY - 2)
 		forms.label(form, "Always use Pokémon:", leftX, nextLineY, leftW, boxH)
 		local dropdownPokemonNames = forms.dropdown(form, {["Init"]="Loading Names"}, rightX, nextLineY - 2, rightW, boxH)
@@ -231,73 +262,77 @@ local function SpriteIsMe()
 
 		-- Custom Sprite
 		forms.label(form, "Custom sprite name: *", leftX, nextLineY, leftW, boxH)
-		local textboxCustomName = forms.textbox(form, settings["CustomSpriteName"]:get() or "", rightW, boxH, nil, rightX, nextLineY - 2)
+		local textboxCustomName = forms.textbox(form, self.Settings["CustomSpriteName"]:get() or "", rightW, boxH, nil, rightX, nextLineY - 2)
 		nextLineY = nextLineY + 22
 		forms.label(form, "Width:", leftX, nextLineY, 50, boxH)
-		local textboxCustomWidth = forms.textbox(form, settings["CustomSpriteWidth"]:get() or "", 50, boxH, "UNSIGNED", leftX + 60, nextLineY - 2)
+		local textboxCustomWidth = forms.textbox(form, self.Settings["CustomSpriteWidth"]:get() or "", 50, boxH, "UNSIGNED", leftX + 60, nextLineY - 2)
 		forms.label(form, "Height:", rightX - 2, nextLineY, 50, boxH)
-		local textboxCustomHeight = forms.textbox(form, settings["CustomSpriteHeight"]:get() or "", 50, boxH, "UNSIGNED", rightX + 60, nextLineY - 2)
+		local textboxCustomHeight = forms.textbox(form, self.Settings["CustomSpriteHeight"]:get() or "", 50, boxH, "UNSIGNED", rightX + 60, nextLineY - 2)
 		nextLineY = nextLineY + 22
 
 		forms.label(form, "* Must add images to /extensions/SpriteIsMeImages/", leftX, nextLineY, 300, boxH)
 		nextLineY = nextLineY + 22
 
 		forms.label(form, "Idle frame durations:", leftX, nextLineY, leftW, boxH)
-		local textboxCustomIdle = forms.textbox(form, settings["CustomSpriteFramesIdle"]:get() or "", rightW, boxH, nil, rightX, nextLineY - 2)
+		local textboxCustomIdle = forms.textbox(form, self.Settings["CustomSpriteFramesIdle"]:get() or "", rightW, boxH, nil, rightX, nextLineY - 2)
 		nextLineY = nextLineY + 22
 		forms.label(form, "Walk frame durations:", leftX, nextLineY, leftW, boxH)
-		local textboxCustomWalk = forms.textbox(form, settings["CustomSpriteFramesWalk"]:get() or "", rightW, boxH, nil, rightX, nextLineY - 2)
+		local textboxCustomWalk = forms.textbox(form, self.Settings["CustomSpriteFramesWalk"]:get() or "", rightW, boxH, nil, rightX, nextLineY - 2)
 		nextLineY = nextLineY + 22
 		forms.label(form, "Sleep frame durations:", leftX, nextLineY, leftW, boxH)
-		local textboxCustomSleep = forms.textbox(form, settings["CustomSpriteFramesSleep"]:get() or "", rightW, boxH, nil, rightX, nextLineY - 2)
+		local textboxCustomSleep = forms.textbox(form, self.Settings["CustomSpriteFramesSleep"]:get() or "", rightW, boxH, nil, rightX, nextLineY - 2)
 		nextLineY = nextLineY + 22
 		forms.label(form, "Faint frame durations:", leftX, nextLineY, leftW, boxH)
-		local textboxCustomFaint = forms.textbox(form, settings["CustomSpriteFramesFaint"]:get() or "", rightW, boxH, nil, rightX, nextLineY - 2)
+		local textboxCustomFaint = forms.textbox(form, self.Settings["CustomSpriteFramesFaint"]:get() or "", rightW, boxH, nil, rightX, nextLineY - 2)
 		nextLineY = nextLineY + 22
 
 		nextLineY = nextLineY + 5
 		forms.button(form, Resources.AllScreens.Save, function()
 			local defaultId = PokemonData.getIdFromName(forms.gettext(dropdownPokemonDefault) or "") or 0
 			if PokemonData.isValid(defaultId) then
-				settings["DefaultIfNoPokemon"].values = { defaultId }
+				self.defaultPokemonId = defaultId
+				self.Settings["DefaultIfNoPokemon"].values = { defaultId }
 			else
-				settings["DefaultIfNoPokemon"].values = {}
+				self.defaultPokemonId = nil
+				self.Settings["DefaultIfNoPokemon"].values = {}
 			end
-			settings["DefaultIfNoPokemon"]:save()
+			self.Settings["DefaultIfNoPokemon"]:save()
 
-			local pokemonID = PokemonData.getIdFromName(forms.gettext(dropdownPokemonNames) or "") or 0
-			if PokemonData.isValid(pokemonID) then
-				settings["ForceUsePokemon"].values = { pokemonID }
+			local pokemonId = PokemonData.getIdFromName(forms.gettext(dropdownPokemonNames) or "") or 0
+			if PokemonData.isValid(pokemonId) then
+				self.forceUsePokemonId = pokemonId
+				self.Settings["ForceUsePokemon"].values = { pokemonId }
 			else
-				settings["ForceUsePokemon"].values = {}
+				self.forceUsePokemonId = nil
+				self.Settings["ForceUsePokemon"].values = {}
 			end
-			settings["ForceUsePokemon"]:save()
+			self.Settings["ForceUsePokemon"]:save()
 
 			local customNameText = forms.gettext(textboxCustomName) or ""
 			if customNameText ~= "" then
-				settings["CustomSpriteName"].values = { customNameText }
-				settings["CustomSpriteName"]:save()
-				settings["CustomSpriteWidth"].values = { forms.gettext(textboxCustomWidth) or "" }
-				settings["CustomSpriteWidth"]:save()
-				settings["CustomSpriteHeight"].values = { forms.gettext(textboxCustomHeight) or "" }
-				settings["CustomSpriteHeight"]:save()
+				self.Settings["CustomSpriteName"].values = { customNameText }
+				self.Settings["CustomSpriteName"]:save()
+				self.Settings["CustomSpriteWidth"].values = { forms.gettext(textboxCustomWidth) or "" }
+				self.Settings["CustomSpriteWidth"]:save()
+				self.Settings["CustomSpriteHeight"].values = { forms.gettext(textboxCustomHeight) or "" }
+				self.Settings["CustomSpriteHeight"]:save()
 
 				local customIdleText = forms.gettext(textboxCustomIdle) or ""
-				settings["CustomSpriteFramesIdle"].values = Utils.split(customIdleText, ",", true)
-				settings["CustomSpriteFramesIdle"]:save()
+				self.Settings["CustomSpriteFramesIdle"].values = Utils.split(customIdleText, ",", true)
+				self.Settings["CustomSpriteFramesIdle"]:save()
 				local customWalkText = forms.gettext(textboxCustomWalk) or ""
-				settings["CustomSpriteFramesWalk"].values = Utils.split(customWalkText, ",", true)
-				settings["CustomSpriteFramesWalk"]:save()
+				self.Settings["CustomSpriteFramesWalk"].values = Utils.split(customWalkText, ",", true)
+				self.Settings["CustomSpriteFramesWalk"]:save()
 				local customSleepText = forms.gettext(textboxCustomSleep) or ""
-				settings["CustomSpriteFramesSleep"].values = Utils.split(customSleepText, ",", true)
-				settings["CustomSpriteFramesSleep"]:save()
+				self.Settings["CustomSpriteFramesSleep"].values = Utils.split(customSleepText, ",", true)
+				self.Settings["CustomSpriteFramesSleep"]:save()
 				local customFaintText = forms.gettext(textboxCustomFaint) or ""
-				settings["CustomSpriteFramesFaint"].values = Utils.split(customFaintText, ",", true)
-				settings["CustomSpriteFramesFaint"]:save()
+				self.Settings["CustomSpriteFramesFaint"].values = Utils.split(customFaintText, ",", true)
+				self.Settings["CustomSpriteFramesFaint"]:save()
 				self.updateIconData()
 			else
-				settings["CustomSpriteName"].values = {}
-				settings["CustomSpriteName"]:save()
+				self.Settings["CustomSpriteName"].values = {}
+				self.Settings["CustomSpriteName"]:save()
 			end
 			Utils.closeBizhawkForm(form)
 			Program.redraw(true)
@@ -319,13 +354,13 @@ local function SpriteIsMe()
 	end
 
 	function self.updateIconData()
-		local customKey = settings["CustomSpriteName"]:get() or ""
+		local customKey = self.Settings["CustomSpriteName"]:get() or ""
 		if customKey == "" then
 			return
 		end
 		SpriteData.IconData[customKey] = {}
-		local w = tonumber(settings["CustomSpriteWidth"]:get() or "") or 32
-		local h = tonumber(settings["CustomSpriteHeight"]:get() or "") or 32
+		local w = tonumber(self.Settings["CustomSpriteWidth"]:get() or "") or 32
+		local h = tonumber(self.Settings["CustomSpriteHeight"]:get() or "") or 32
 		local framesToLoad = {
 			[SpriteData.Types.Idle] = "CustomSpriteFramesIdle",
 			[SpriteData.Types.Walk] = "CustomSpriteFramesWalk",
@@ -334,9 +369,9 @@ local function SpriteIsMe()
 		}
 		for typeKey, settingsKey in pairs(framesToLoad) do
 			local fileName = self.buildSpritePath(typeKey, customKey, ".png", true)
-			if FileManager.fileExists(fileName) and #(settings[settingsKey].values or {}) > 0 then
+			if FileManager.fileExists(fileName) and #(self.Settings[settingsKey].values or {}) > 0 then
 				SpriteData.IconData[customKey][typeKey] = { w = w, h = h, durations = {} }
-				for _, frame in ipairs(settings[settingsKey].values) do
+				for _, frame in ipairs(self.Settings[settingsKey].values) do
 					local frameValue = tonumber(frame)
 					if frameValue then
 						table.insert(SpriteData.IconData[customKey][typeKey].durations, frameValue)
@@ -348,14 +383,20 @@ local function SpriteIsMe()
 		SpriteData.createActiveIcon(customKey)
 	end
 
+	function self.loadSettings()
+		for _, setting in pairs(self.Settings or {}) do
+			setting:load()
+		end
+		local id = tonumber(self.Settings["ForceUsePokemon"]:get() or "")
+		self.forceUsePokemonId = PokemonData.isValid(id) and id or nil
+		id = tonumber(self.Settings["DefaultIfNoPokemon"]:get() or "")
+		self.defaultPokemonId = PokemonData.isValid(id) and id or nil
+	end
+
 	-- Tracker specific functions, can't rename these functions
 	-- Executed only once: when the Tracker finishes starting up and after it loads all other required files and code
 	function self.startup()
 		if not Main.IsOnBizhawk() then return end
-		-- Load all settings
-		for _, setting in pairs(settings or {}) do
-			setting:load()
-		end
 
 		if not SpriteData.animationAllowed() then
 			originalAnimationAllowed = SpriteData.animationAllowed
@@ -367,7 +408,10 @@ local function SpriteIsMe()
 			Options["Allow sprites to walk"] = true
 		end
 
+		self.loadSettings()
 		self.updateIconData()
+		INFINITE_FUSION_EXT = TrackerAPI.getExtensionSelf("InfiniteFusion")
+		EventHandler.addNewEvent(self.event)
 	end
 
 	-- Executed only once: When the extension is disabled by the user, necessary to undo any customizations, if able
@@ -380,6 +424,7 @@ local function SpriteIsMe()
 		if originalWalkSetting ~= nil then
 			Options["Allow sprites to walk"] = originalWalkSetting
 		end
+		EventHandler.removeEvent(self.event.Key)
 	end
 
 	-- Executed when the user clicks the "Options" button while viewing the extension details within the Tracker's UI
