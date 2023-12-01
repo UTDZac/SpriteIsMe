@@ -4,7 +4,7 @@ An Ironmon Tracker extension: You become the Pokémon!
 ![image](https://github.com/UTDZac/SpriteIsMe-IronmonExtension/assets/4258818/d1cd6f36-e75a-4423-9232-618c4cd0b672)
 
 ## Requirements
-- [Ironmon-Tracker v8.3.0](https://github.com/besteon/Ironmon-Tracker) or higher
+- [Ironmon-Tracker v8.4.1](https://github.com/besteon/Ironmon-Tracker) or higher
 
 ## Download & Install
 1) Download the [latest release](https://github.com/UTDZac/SpriteIsMe-IronmonExtension/releases/latest) of this extension from the GitHub's Releases page
