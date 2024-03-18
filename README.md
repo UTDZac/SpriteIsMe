@@ -5,6 +5,8 @@ An Ironmon Tracker extension: You become the Pokémon!
 
 ## Requirements
 - [Ironmon-Tracker v8.4.1](https://github.com/besteon/Ironmon-Tracker) or higher
+- [FRLG Invisible Trainer patch](https://github.com/UTDZac/SpriteIsMe-IronmonExtension/blob/main/FRLG_Invisible_Trainer_-_Maple_Compatible.ips) _(Optional)_
+   - Use this if you want to remove the base player character sprite from the game.
 
 ## Download & Install
 1) Download the [latest release](https://github.com/UTDZac/SpriteIsMe-IronmonExtension/releases/latest) of this extension from the GitHub's Releases page
