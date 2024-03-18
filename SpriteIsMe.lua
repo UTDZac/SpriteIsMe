@@ -1,6 +1,6 @@
 local function SpriteIsMe()
 	local self = {
-		version = "1.3",
+		version = "1.4",
 		name = "Sprite Is Me",
 		author = "UTDZac",
 		description = "Turns your character into your lead Pokémon, or you can choose the Pokémon you want to become.",
@@ -27,6 +27,11 @@ local function SpriteIsMe()
 	local originalWalkSetting, originalAnimationAllowed
 	local lastKnownFacing = 1
 	local INFINITE_FUSION_EXT
+
+	local TXT_DEFAULT = "Default"
+	local TXT_CURRENT = "Current"
+	local TXT_RANDOM = "Random"
+	local TXT_NONE = "---"
 
 	local SCREEN_CENTER_X = Constants.SCREEN.WIDTH / 2 - 16
 	local SCREEN_CENTER_Y = Constants.SCREEN.HEIGHT / 2 - 24
@@ -75,25 +80,69 @@ local function SpriteIsMe()
 			if Utils.isNilOrEmpty(params, true) then
 				return string.format("> Must enter a valid Pokémon name.")
 			end
-			local id = DataHelper.findPokemonId(params)
-			if not PokemonData.isValid(id) then
-				return string.format("%s > Can't find a Pokémon with this name.", params)
-			end
-			-- Set the SpriteIsMe extension to use that Pokémon
+
 			local ext = TrackerAPI.getExtensionSelf(self.settingsKey)
-			if ext then
-				ext.forceUsePokemonId = id
-				local extSettings = ext.Settings and ext.Settings["ForceUsePokemon"]
-				if extSettings then
-					ext.Settings["ForceUsePokemon"].values = { id }
-					ext.Settings["ForceUsePokemon"]:save()
-				end
-				Program.redraw(true)
+			if not ext then
+				return string.format("> Error finding the '%s' extension. Try reloading the Tracker script.", self.name)
 			end
-			-- Return an empty response, no output necssary if it works
-			return ""
+
+			local matchFound = ext.setForceUseMon(params)
+			Program.redraw(true)
+			if matchFound then
+				-- Send back an empty response, no output necssary if it works
+				return ""
+			else
+				return string.format("%s > Can't find this Pokémon; defaulting to a random sprite.", params)
+			end
 		end,
 	})
+
+	function self.getSortedNameOptionsList()
+		local names = PokemonData.namesToList() or {}
+		table.sort(names, function(a,b) return a < b end) -- alphabetical
+		table.insert(names, 1, TXT_NONE)
+		return names
+	end
+
+	---Returns true if a proper match is found; false if no match
+	---@param name string?
+	---@return boolean matchFound
+	function self.setForceUseMon(name)
+		local newId
+		local matchFound = true
+		-- First check if anyway of the TXT keywords are present (or nothing entered, then use random)
+		if Utils.isNilOrEmpty(name, true) or Utils.containsText(name, TXT_RANDOM, true) then
+			newId = Utils.randomPokemonID()
+		elseif Utils.containsText(name, TXT_DEFAULT, true) or Utils.containsText(name, TXT_CURRENT, true) then
+			newId = nil
+		else
+			-- Then check if the entered name matches close enough to a pokemon name
+			local pokemonId = DataHelper.findPokemonId(name) or 0
+			if PokemonData.isValid(pokemonId) then
+				newId = pokemonId
+			else
+				-- Otherwise, just use a random pokemon
+				newId = Utils.randomPokemonID()
+				matchFound = false
+			end
+		end
+
+		-- Check if there exists animation data for this pokemon id, otherwise choose something else
+		-- Safeguard for eventual Nat Dex
+		if newId and not SpriteData.WalkingPals[newId] then
+			newId = self.defaultPokemonId or 25 -- Use Pikachu if no other option
+			matchFound = false
+		end
+
+		self.forceUsePokemonId = newId
+		local FUP = self.Settings["ForceUsePokemon"]
+		if FUP then
+			FUP.values = { newId }
+			FUP:save()
+		end
+
+		return matchFound
+	end
 
 	function self.drawSpriteOnScreen()
 		if not Program.isValidMapLocation() or Battle.inBattleScreen or Program.currentOverlay ~= nil then
@@ -230,13 +279,12 @@ local function SpriteIsMe()
 		local rightX, rightW = 152, 134
 		local boxH = 20
 		local nextLineY = 12
-		local allPokemonNames = PokemonData.namesToList()
-		table.insert(allPokemonNames, 1, Constants.BLANKLINE)
+		local nameOptions = self.getSortedNameOptionsList()
 
 		forms.label(form, "Default if no Pokémon:", leftX, nextLineY, leftW, boxH)
 		local defaultPokemonName = PokemonData.isValid(self.defaultPokemonId) and PokemonData.Pokemon[self.defaultPokemonId].name or Constants.BLANKLINE
 		local dropdownPokemonDefault = forms.dropdown(form, {["Init"]="Loading Names"}, rightX, nextLineY - 2, rightW, boxH)
-		forms.setdropdownitems(dropdownPokemonDefault, allPokemonNames, true) -- true = alphabetize the list
+		forms.setdropdownitems(dropdownPokemonDefault, nameOptions, false) -- true = alphabetize the list
 		forms.setproperty(dropdownPokemonDefault, "AutoCompleteSource", "ListItems")
 		forms.setproperty(dropdownPokemonDefault, "AutoCompleteMode", "Append")
 		forms.settext(dropdownPokemonDefault, defaultPokemonName)
@@ -251,7 +299,7 @@ local function SpriteIsMe()
 		-- local textboxPokemonName = forms.textbox(form, chosenPokemonName, rightW, boxH, nil, rightX, nextLineY - 2)
 		forms.label(form, "Always use Pokémon:", leftX, nextLineY, leftW, boxH)
 		local dropdownPokemonNames = forms.dropdown(form, {["Init"]="Loading Names"}, rightX, nextLineY - 2, rightW, boxH)
-		forms.setdropdownitems(dropdownPokemonNames, allPokemonNames, true) -- true = alphabetize the list
+		forms.setdropdownitems(dropdownPokemonNames, nameOptions, false) -- true = alphabetize the list
 		forms.setproperty(dropdownPokemonNames, "AutoCompleteSource", "ListItems")
 		forms.setproperty(dropdownPokemonNames, "AutoCompleteMode", "Append")
 		forms.settext(dropdownPokemonNames, chosenPokemonName)
@@ -288,8 +336,10 @@ local function SpriteIsMe()
 
 		nextLineY = nextLineY + 5
 		forms.button(form, Resources.AllScreens.Save, function()
+			-- Check if there exists animation data for this pokemon id, otherwise choose something else
+			-- Safeguard for eventual Nat Dex
 			local defaultId = PokemonData.getIdFromName(forms.gettext(dropdownPokemonDefault) or "") or 0
-			if PokemonData.isValid(defaultId) then
+			if PokemonData.isValid(defaultId) and SpriteData.WalkingPals[defaultId] then
 				self.defaultPokemonId = defaultId
 				self.Settings["DefaultIfNoPokemon"].values = { defaultId }
 			else
@@ -298,15 +348,14 @@ local function SpriteIsMe()
 			end
 			self.Settings["DefaultIfNoPokemon"]:save()
 
-			local pokemonId = PokemonData.getIdFromName(forms.gettext(dropdownPokemonNames) or "") or 0
-			if PokemonData.isValid(pokemonId) then
-				self.forceUsePokemonId = pokemonId
-				self.Settings["ForceUsePokemon"].values = { pokemonId }
-			else
+			local forceUseName = forms.gettext(dropdownPokemonNames) or ""
+			if forceUseName == TXT_NONE then
 				self.forceUsePokemonId = nil
 				self.Settings["ForceUsePokemon"].values = {}
+				self.Settings["ForceUsePokemon"]:save()
+			else
+				self.setForceUseMon(forceUseName)
 			end
-			self.Settings["ForceUsePokemon"]:save()
 
 			local customNameText = forms.gettext(textboxCustomName) or ""
 			if customNameText ~= "" then
@@ -387,9 +436,9 @@ local function SpriteIsMe()
 		for _, setting in pairs(self.Settings or {}) do
 			setting:load()
 		end
-		local id = tonumber(self.Settings["ForceUsePokemon"]:get() or "")
+		local id = tonumber(self.Settings["ForceUsePokemon"]:get() or "") or 0
 		self.forceUsePokemonId = PokemonData.isValid(id) and id or nil
-		id = tonumber(self.Settings["DefaultIfNoPokemon"]:get() or "")
+		id = tonumber(self.Settings["DefaultIfNoPokemon"]:get() or "") or 0
 		self.defaultPokemonId = PokemonData.isValid(id) and id or nil
 	end
 
